@@ -1,19 +1,19 @@
-# Python
-__pycache__/
-*.py[cod]
-*.env
+# Python virtual environment - never push this
+backend/venv/
 venv/
-.env
 
-# Node
+# Environment variables - contains secret API keys
+.env
+backend/.env
+*.env
+
+# Node modules - too large to push
 node_modules/
 .next/
-.DS_Store
-npm-debug.log*
 
-# VS Code
+# VS Code settings
 .vscode/
 
-# OS
+# OS files
+.DS_Store
 Thumbs.db
-venv/
