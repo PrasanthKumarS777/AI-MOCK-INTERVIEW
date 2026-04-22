@@ -19,11 +19,16 @@ app = FastAPI(
 # CORS (Cross-Origin Resource Sharing) setup
 # Without this, the browser will block requests from the frontend
 # because the frontend (port 3000) and backend (port 8000) are different origins
+# We allow both localhost:3000 and 127.0.0.1:3000 because browsers
+# sometimes treat these two as different origins even though they
+# both point to the same machine
 # -----------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    # Allow requests from the Next.js frontend running locally
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     # Allow all HTTP methods like GET, POST, PUT, DELETE
     allow_methods=["*"],
@@ -43,7 +48,7 @@ app.include_router(evaluation_router, prefix="/evaluation", tags=["Evaluation"])
 
 # -----------------------------------------------------------------------
 # Root endpoint - just a health check to confirm the server is running
-# Visit http://localhost:8000 to see this response
+# Visit http://127.0.0.1:8000 to see this response
 # -----------------------------------------------------------------------
 @app.get("/")
 def root():
