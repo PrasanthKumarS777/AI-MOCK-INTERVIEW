@@ -1,294 +1,262 @@
 "use client";
 
-// these are the hooks we need — useState for local state, useEffect to run
-// side effects (like fetching the first question on mount), and Suspense to
-// handle the async nature of useSearchParams in Next.js 13+
-import { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { Suspense } from "react";
 
-// shape of what comes back from the /evaluation/submit endpoint
-// score is 0-10, and the rest are strings the AI fills in
-interface EvaluationResult {
+// Shape of each Q&A entry we get back from the interview session
+interface SessionItem {
+  question: string;
+  answer: string;
   score: number;
-  feedback: string;
-  suggestion: string;
-  sample_answer: string;
 }
 
-// keeping these as constants so they're easy to tweak later
-// if the interview length ever changes, this is the only place to update it
-const TOTAL_QUESTIONS = 5;
-const API_BASE = "http://127.0.0.1:8000";
-
-// the actual page content is split into its own component because
-// useSearchParams() needs to be wrapped in Suspense — Next.js requirement
-function InterviewContent() {
+function SummaryContent() {
+  // useSearchParams lets us read ?role=... and ?data=... from the URL
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // role and difficulty come in through the URL query string
-  // e.g. /interview?role=Frontend+Engineer&difficulty=medium
-  const role = searchParams.get("role") || "";
-  const difficulty = searchParams.get("difficulty") || "";
+  // Pull the role name from the URL, fall back to "Unknown Role" if it's missing
+  const role = searchParams.get("role") || "Unknown Role";
 
-  // question holds whatever the backend sends back for the current question
-  const [question, setQuestion] = useState("");
+  // The full session history is packed as a JSON string in the "data" query param
+  const rawData = searchParams.get("data");
 
-  // user's typed response before they hit submit
-  const [answer, setAnswer] = useState("");
+  // Try to decode and parse the session data — if anything goes wrong we just
+  // show an empty summary rather than blowing up the whole page
+  let sessionData: SessionItem[] = [];
+  try {
+    if (rawData) sessionData = JSON.parse(decodeURIComponent(rawData));
+  } catch {
+    // silent fallback — bad data shouldn't crash the summary screen
+    sessionData = [];
+  }
 
-  // null until the user submits — once set, the feedback panel replaces the text box
-  const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
+  // Add up all the individual scores to get a raw total
+  const totalScore = sessionData.reduce((sum, item) => sum + item.score, 0);
 
-  // tracks which question we're on out of TOTAL_QUESTIONS
-  const [questionNumber, setQuestionNumber] = useState(1);
+  // Divide by the number of questions to get the average (guard against 0 questions)
+  const avg = sessionData.length > 0 ? totalScore / sessionData.length : 0;
 
-  // single loading flag covers both fetching questions and evaluating answers
-  const [isLoading, setIsLoading] = useState(false);
+  // Format to one decimal place for display (e.g. 7.3)
+  const averageScore = avg.toFixed(1);
 
-  // keeps a running log of every Q&A pair + score so we can pass it
-  // to the summary page at the end of the session
-  const [sessionHistory, setSessionHistory] = useState<
-    { question: string; answer: string; score: number }[]
-  >([]);
-
-  // word count check — anything under 5 words is not a real attempt
-  // we compute this on every render so the button and hint stay in sync with typing
-  const wordCount = answer.trim().split(/\s+/).filter(Boolean).length;
-  const isValidAnswer = wordCount >= 5;
-
-  // kick off the first question as soon as we have role + difficulty
-  // the empty dependency array is intentional — we only want this once on mount
-  useEffect(() => {
-    if (role && difficulty) {
-      fetchFirstQuestion();
-    }
-  }, [role, difficulty]);
-
-  // hits the /interview/start endpoint to get question #1
-  // separate from fetchNextQuestion because the start endpoint might do
-  // session setup work on the backend side
-  const fetchFirstQuestion = async () => {
-    setIsLoading(true);
-    try {
-      const response = await fetch(`${API_BASE}/interview/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, difficulty }),
-      });
-      const data = await response.json();
-      setQuestion(data.question);
-    } catch (error) {
-      // if the backend isn't running, show a friendly message in place of the question
-      setQuestion("Error connecting to server. Please make sure the backend is running.");
-    }
-    setIsLoading(false);
+  // Maps the numeric average to a human-readable label and a set of colors
+  // so the whole card changes appearance based on how well the user did
+  const getPerformance = (a: number) => {
+    if (a >= 8) return { label: "Excellent",         color: "var(--success)", dim: "rgba(34,197,94,0.12)"  };
+    if (a >= 6) return { label: "Good",              color: "var(--accent)",  dim: "var(--accent-glow)"    };
+    if (a >= 4) return { label: "Average",           color: "var(--warning)", dim: "var(--warning-bg)"     };
+    return       { label: "Needs Improvement",       color: "var(--danger)",  dim: "var(--danger-bg)"      };
   };
 
-  // sends the typed answer to the backend for AI evaluation
-  // the backend returns a score plus feedback, suggestions, and a sample answer
-  const handleSubmitAnswer = async () => {
-    // double-check word count here too — just in case the button guard is bypassed
-    if (!isValidAnswer) return;
-    setIsLoading(true);
-    try {
-      const response = await fetch(`${API_BASE}/evaluation/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, question, answer }),
-      });
-      const data = await response.json();
-      setEvaluation(data);
-
-      // append this round to the history array — we need this for the summary screen
-      setSessionHistory((prev) => [
-        ...prev,
-        { question, answer, score: data.score },
-      ]);
-    } catch (error) {
-      alert("Error evaluating answer. Please check if backend is running.");
-    }
-    setIsLoading(false);
+  // Returns a short actionable tip based on how the user scored overall
+  // — meant to feel encouraging rather than just cold numbers
+  const getRecommendation = (a: number) => {
+    if (a >= 8) return "Strong performance. Your answers were clear and structured — keep practicing to maintain this level.";
+    if (a >= 6) return "Good effort. You're covering the right areas, but try adding more specific examples and structure.";
+    if (a >= 4) return "Decent start. Go through the sample answers and practice explaining ideas more concisely.";
+    return "Keep going. Study the fundamentals for this role and try again — every attempt counts.";
   };
 
-  // called when the user clicks "Next Question" or "View Session Summary"
-  // if we've hit the last question, serialize the history and navigate to /summary
-  // otherwise, reset the answer/evaluation state and fetch the next question
-  const handleNextQuestion = async () => {
-    if (questionNumber >= TOTAL_QUESTIONS) {
-      // pack the session data into the URL so the summary page can read it
-      // without needing any shared state or a database call
-      const summaryData = encodeURIComponent(JSON.stringify(sessionHistory));
-      router.push(`/summary?data=${summaryData}&role=${encodeURIComponent(role)}`);
-      return;
-    }
-
-    // wipe the previous answer + feedback so the UI returns to the "answer" state
-    setEvaluation(null);
-    setAnswer("");
-    setIsLoading(true);
-    setQuestionNumber((prev) => prev + 1);
-
-    try {
-      const response = await fetch(`${API_BASE}/interview/next`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, difficulty }),
-      });
-      const data = await response.json();
-      setQuestion(data.question);
-    } catch (error) {
-      setQuestion("Error fetching next question. Please check the backend.");
-    }
-    setIsLoading(false);
+  // Per-question badge colors: green for high scores, yellow for mid, red for low
+  // Used in the breakdown list so each question's score stands out at a glance
+  const scoreBadge = (score: number) => {
+    if (score >= 8) return { bg: "rgba(34,197,94,0.1)",  color: "var(--success)" };
+    if (score >= 5) return { bg: "rgba(245,158,11,0.1)", color: "var(--warning)" };
+    return               { bg: "rgba(239,68,68,0.1)",   color: "var(--danger)"  };
   };
 
-  // quick helper to color-code the score badge
-  // green for strong answers, yellow for okay, red for needs work
-  const getScoreColor = (score: number) => {
-    if (score >= 8) return "text-green-600";
-    if (score >= 5) return "text-yellow-600";
-    return "text-red-500";
-  };
+  // Compute the overall performance object once so we can reuse label + colors below
+  const perf = getPerformance(avg);
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
-      <div className="max-w-3xl mx-auto">
+    <main style={{ minHeight: "100dvh", background: "var(--bg)", padding: "1.5rem" }}>
+      <div style={{ maxWidth: 680, margin: "0 auto" }}>
 
-        {/* ── header row: role name on the left, progress bar on the right ── */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-xl font-bold text-slate-800">{role}</h1>
-            <p className="text-sm text-slate-500 capitalize">{difficulty} level interview</p>
-          </div>
-          <div className="text-right">
-            <span className="text-sm font-semibold text-slate-600">
-              Question {questionNumber} of {TOTAL_QUESTIONS}
-            </span>
-            {/* progress bar fills proportionally as questions advance */}
-            <div className="w-32 h-2 bg-slate-200 rounded-full mt-1">
-              <div
-                className="h-2 bg-blue-500 rounded-full transition-all duration-300"
-                style={{ width: `${(questionNumber / TOTAL_QUESTIONS) * 100}%` }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* ── question card ── */}
-        {/* shows a spinner while the first question is loading, then the question text */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 mb-4">
-          <p className="text-xs font-semibold text-blue-500 uppercase tracking-wide mb-3">
-            Interview Question
+        {/* ── Page header ───────────────────────────────────────────────────────
+            Shows the role name and a quick count of how many questions were
+            answered this session. Centered so it feels like a results screen. */}
+        <div style={{ textAlign: "center", marginBottom: "2rem" }}>
+          <p style={{
+            fontSize: "0.75rem", fontFamily: "var(--font-mono)",
+            color: "var(--text-faint)", textTransform: "uppercase",
+            letterSpacing: "0.08em", marginBottom: "0.5rem",
+          }}>
+            Session Complete
           </p>
-          {isLoading && !question ? (
-            <div className="flex items-center gap-2 text-slate-400">
-              <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-              <span className="text-sm">Generating question...</span>
-            </div>
-          ) : (
-            <p className="text-slate-800 text-base leading-relaxed">{question}</p>
-          )}
+          <h1 style={{
+            fontSize: "clamp(1.375rem, 3vw, 1.75rem)",
+            fontWeight: 700, color: "var(--text)",
+            letterSpacing: "-0.02em", marginBottom: "0.5rem",
+          }}>
+            {role}
+          </h1>
+          <p style={{ fontSize: "0.875rem", color: "var(--text-muted)" }}>
+            {sessionData.length} questions answered
+          </p>
         </div>
 
-        {/* ── answer input ── */}
-        {/* this whole card disappears once the user gets feedback, to keep the UI clean */}
-        {!evaluation && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 mb-4">
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
-              Your Answer
-            </label>
-            <textarea
-              value={answer}
-              onChange={(e) => setAnswer(e.target.value)}
-              placeholder="Type your answer here..."
-              rows={5}
-              className="w-full border border-slate-200 rounded-xl p-3 text-sm text-slate-700
-                focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
-            />
+        {/* ── Overall score card ────────────────────────────────────────────────
+            The background and border color react to the performance tier so
+            the card is green for excellent, amber for average, etc.
+            The big number is the average score out of 10. */}
+        <div style={{
+          background: perf.dim,
+          border: `1px solid ${perf.color}22`,
+          borderRadius: "var(--radius-lg)",
+          padding: "2rem",
+          textAlign: "center",
+          marginBottom: "1rem",
+        }}>
+          <p className="eyebrow" style={{ marginBottom: "1rem" }}>Overall Score</p>
 
-            {/* only show the warning if the user has started typing but hasn't reached 5 words yet
-                we don't want to flash this on an empty box — that would be annoying on load */}
-            {answer.length > 0 && !isValidAnswer && (
-              <p className="text-red-500 text-sm mt-2">
-                Please write at least a proper attempt before submitting.
-              </p>
-            )}
-
-            {/* button is disabled while loading OR if the answer doesn't have enough words
-                this is the first line of defense before the backend word count check */}
-            <button
-              onClick={handleSubmitAnswer}
-              disabled={!isValidAnswer || isLoading}
-              className="mt-3 w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold
-                rounded-xl transition-all duration-200 disabled:bg-slate-300 disabled:cursor-not-allowed"
-            >
-              {isLoading ? "Evaluating..." : "Submit Answer"}
-            </button>
+          {/* Large score number — clamp keeps it readable on both mobile and desktop */}
+          <div style={{ marginBottom: "0.75rem" }}>
+            <span style={{
+              fontSize: "clamp(3rem, 8vw, 5rem)",
+              fontWeight: 700, color: perf.color,
+              fontFamily: "var(--font-mono)", lineHeight: 1,
+            }}>
+              {averageScore}
+            </span>
+            <span style={{ fontSize: "1.25rem", color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>
+              /10
+            </span>
           </div>
-        )}
 
-        {/* ── feedback card ── */}
-        {/* only renders after evaluation comes back from the backend */}
-        {evaluation && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 mb-4">
+          {/* Performance tier label — pill badge styled to match the tier color */}
+          <span style={{
+            display: "inline-block",
+            padding: "0.25rem 1rem",
+            borderRadius: "99px",
+            border: `1px solid ${perf.color}44`,
+            fontSize: "0.875rem", fontWeight: 600,
+            color: perf.color, background: "rgba(0,0,0,0.3)",
+          }}>
+            {perf.label}
+          </span>
 
-            {/* score badge — color changes based on how well they did */}
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
-                AI Feedback
-              </h2>
-              <span className={`text-2xl font-bold ${getScoreColor(evaluation.score)}`}>
-                {evaluation.score}/10
-              </span>
-            </div>
+          {/* Raw points tally — handy for users who want to see the absolute numbers */}
+          <p style={{
+            fontSize: "0.75rem", color: "var(--text-faint)",
+            fontFamily: "var(--font-mono)", marginTop: "0.75rem",
+          }}>
+            {totalScore} / {sessionData.length * 10} total points
+          </p>
+        </div>
 
-            {/* general feedback on what the user said */}
-            <div className="mb-4">
-              <p className="text-xs font-semibold text-slate-400 uppercase mb-1">Feedback</p>
-              <p className="text-sm text-slate-700 leading-relaxed">{evaluation.feedback}</p>
-            </div>
+        {/* ── Recommendation card ───────────────────────────────────────────────
+            One sentence of coaching advice tailored to the score range.
+            Kept intentionally brief so it doesn't feel overwhelming. */}
+        <div className="card" style={{ marginBottom: "1rem" }}>
+          <p className="eyebrow" style={{ marginBottom: "0.75rem" }}>Recommendation</p>
+          <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", lineHeight: 1.75 }}>
+            {getRecommendation(avg)}
+          </p>
+        </div>
 
-            {/* actionable tip for how to answer better next time */}
-            <div className="mb-4 bg-yellow-50 rounded-xl p-4">
-              <p className="text-xs font-semibold text-yellow-700 uppercase mb-1">How to Improve</p>
-              <p className="text-sm text-yellow-800 leading-relaxed">{evaluation.suggestion}</p>
-            </div>
+        {/* ── Per-question breakdown ────────────────────────────────────────────
+            Lists every Q&A pair with its score badge. The answer text is clamped
+            to 2 lines to keep the list compact — users can review full answers
+            in the interview transcript if they need them. */}
+        <div className="card" style={{ marginBottom: "1.5rem" }}>
+          <p className="eyebrow" style={{ marginBottom: "1.25rem" }}>Question Breakdown</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            {sessionData.map((item, i) => {
+              // Pick badge colors for this specific question's score
+              const badge = scoreBadge(item.score);
+              return (
+                <div key={i} style={{
+                  padding: "1rem",
+                  background: "var(--surface-2)",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--border)",
+                }}>
+                  <div style={{
+                    display: "flex", alignItems: "flex-start",
+                    justifyContent: "space-between", gap: "1rem",
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {/* Question index label (Q1, Q2, …) */}
+                      <p style={{
+                        fontSize: "0.75rem", fontFamily: "var(--font-mono)",
+                        color: "var(--text-faint)", marginBottom: "0.5rem",
+                      }}>
+                        Q{i + 1}
+                      </p>
 
-            {/* model answer is optional — the backend may or may not include it */}
-            {evaluation.sample_answer && (
-              <div className="bg-green-50 rounded-xl p-4 mb-4">
-                <p className="text-xs font-semibold text-green-700 uppercase mb-1">Sample Answer</p>
-                <p className="text-sm text-green-800 leading-relaxed">{evaluation.sample_answer}</p>
-              </div>
-            )}
+                      {/* The actual interview question text */}
+                      <p style={{
+                        fontSize: "0.875rem", color: "var(--text)",
+                        fontWeight: 500, marginBottom: "0.5rem", lineHeight: 1.5,
+                      }}>
+                        {item.question}
+                      </p>
 
-            {/* button label changes on the last question to signal the session is wrapping up */}
-            <button
-              onClick={handleNextQuestion}
-              className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white font-semibold
-                rounded-xl transition-all duration-200"
-            >
-              {questionNumber >= TOTAL_QUESTIONS ? "View Session Summary →" : "Next Question →"}
-            </button>
+                      {/* User's answer, clamped to 2 lines so the list doesn't get too long */}
+                      <p style={{
+                        fontSize: "0.75rem", color: "var(--text-faint)", lineHeight: 1.6,
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                      }}>
+                        {item.answer}
+                      </p>
+                    </div>
+
+                    {/* Score badge on the right — color reflects how well this question went */}
+                    <span style={{
+                      flexShrink: 0,
+                      padding: "0.25rem 0.75rem",
+                      borderRadius: "var(--radius-sm)",
+                      background: badge.bg, color: badge.color,
+                      fontSize: "0.875rem", fontWeight: 700,
+                      fontFamily: "var(--font-mono)",
+                    }}>
+                      {item.score}/10
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        )}
+        </div>
+
+        {/* ── Action buttons ────────────────────────────────────────────────────
+            Two options: go back to the home page to pick a different role,
+            or jump straight back into the same role for another practice round. */}
+        <div style={{ display: "flex", gap: "0.75rem" }}>
+          <button onClick={() => router.push("/")} className="btn-secondary">
+            ← Try Another Role
+          </button>
+          <button
+            onClick={() =>
+              // Re-use the same role and default to intermediate difficulty
+              router.push(`/interview?role=${encodeURIComponent(role)}&difficulty=intermediate`)
+            }
+            className="btn-primary"
+          >
+            Practice Again
+          </button>
+        </div>
+
       </div>
     </main>
   );
 }
 
-// the default export wraps InterviewContent in Suspense
-// Next.js requires this whenever a child component calls useSearchParams()
-// the fallback is just a centered spinner — nothing fancy
-export default function InterviewPage() {
+// Wrap in Suspense because useSearchParams() needs it in Next.js —
+// the fallback spinner shows while the client hydrates the search params
+export default function SummaryPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+      <div style={{
+        minHeight: "100dvh", background: "var(--bg)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <div className="spinner" style={{ width: 24, height: 24 }} />
       </div>
     }>
-      <InterviewContent />
+      <SummaryContent />
     </Suspense>
   );
 }

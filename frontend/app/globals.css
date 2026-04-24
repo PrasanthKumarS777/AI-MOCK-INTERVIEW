@@ -1,32 +1,193 @@
-/* globals.css */
-/* Tailwind CSS v4 uses a single @import instead of the three separate
-   @tailwind base/components/utilities directives from v3.
-   This single line loads everything Tailwind needs. */
-
+/* fonts must come before everything else — CSS rule */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@300..500&display=swap');
 @import "tailwindcss";
 
-/* Set a clean background and default font for the whole app */
-body {
-  background-color: #f8fafc;
-  color: #1e293b;
-  font-family: 'Inter', sans-serif;
+:root {
+  /* backgrounds — 3 levels of dark so cards don't just blend into the page */
+  --bg:           #0a0a0a;
+  --surface:      #111111;
+  --surface-2:    #161616;
+  --surface-3:    #1c1c1c;
+
+  /* borders — keeping these very subtle, almost invisible */
+  --border:        rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.12);
+
+  /* text hierarchy */
+  --text:       #ededed;
+  --text-muted: #a1a1a1;
+  --text-faint: #525252;
+
+  /* blue accent — not going full neon, just enough to guide the eye */
+  --accent:       #3b82f6;
+  --accent-glow:  rgba(59, 130, 246, 0.15);
+  --accent-hover: #2563eb;
+
+  /* status colors for feedback sections */
+  --success:    #22c55e;
+  --success-bg: rgba(34, 197, 94, 0.08);
+  --warning:    #f59e0b;
+  --warning-bg: rgba(245, 158, 11, 0.08);
+  --danger:     #ef4444;
+  --danger-bg:  rgba(239, 68, 68, 0.08);
+
+  /* radius scale — sm for small UI bits, xl for big containers */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+
+  --font-sans: 'Geist', 'Inter', system-ui, sans-serif;
+  --font-mono: 'Geist Mono', 'Fira Code', monospace;
+
+  --transition: 150ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Smooth scrolling for the entire page */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
 html {
   scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Custom scrollbar to make it look cleaner */
-::-webkit-scrollbar {
-  width: 6px;
+body {
+  min-height: 100dvh;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.6;
 }
 
-::-webkit-scrollbar-track {
-  background: #f1f5f9;
+/* skinny scrollbar, less visual noise */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #333; }
+
+::selection {
+  background: rgba(59, 130, 246, 0.25);
+  color: var(--text);
 }
 
-::-webkit-scrollbar-thumb {
-  background: #94a3b8;
-  border-radius: 3px;
+/* keyboard nav focus ring */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* don't animate for people who've asked not to */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+button { cursor: pointer; }
+
+/* ─── shared card — used on all 3 pages ─── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+}
+
+.card:hover {
+  border-color: var(--border-strong);
+}
+
+/* small all-caps label above sections — like "QUESTION 1", "AI FEEDBACK" etc */
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+
+/* spinning loader */
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── textarea used on the interview page ─── */
+textarea.dark-input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  line-height: 1.7;
+  resize: none;
+  width: 100%;
+  padding: 1rem;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+textarea.dark-input::placeholder { color: var(--text-faint); }
+
+textarea.dark-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ─── buttons ─── */
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 0.7rem 1.25rem;
+  border-radius: var(--radius-md);
+  border: none;
+  width: 100%;
+  transition: background var(--transition), box-shadow var(--transition), transform var(--transition);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.3);
+}
+
+.btn-primary:active:not(:disabled) { transform: scale(0.99); }
+
+.btn-primary:disabled {
+  background: var(--surface-3);
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 0.9rem;
+  padding: 0.7rem 1.25rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  width: 100%;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+
+.btn-secondary:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.18);
 }
