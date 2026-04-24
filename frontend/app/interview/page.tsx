@@ -1,252 +1,247 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useState, useEffect } from "react";
 
-// Shape of each Q&A entry we get back from the interview session
-interface SessionItem {
-  question: string;
-  answer: string;
-  score: number;
-}
-
-function SummaryContent() {
-  // useSearchParams lets us read ?role=... and ?data=... from the URL
+// only run on client — useSearchParams needs it in Next.js
+function InterviewContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // Pull the role name from the URL, fall back to "Unknown Role" if it's missing
-  const role = searchParams.get("role") || "Unknown Role";
+  const role = searchParams.get("role") || "Software Engineer";
+  const difficulty = searchParams.get("difficulty") || "intermediate";
 
-  // The full session history is packed as a JSON string in the "data" query param
-  const rawData = searchParams.get("data");
+  const [question, setQuestion]         = useState("");
+  const [answer, setAnswer]             = useState("");
+  const [feedback, setFeedback]         = useState<null | { score: number; feedback: string; improvement: string; sample_answer: string }>(null);
+  const [isLoading, setIsLoading]       = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [currentQ, setCurrentQ]         = useState(1);
+  const [history, setHistory]           = useState<{ question: string; answer: string; score: number }[]>([]);
+  const totalQ = 5;
 
-  // Try to decode and parse the session data — if anything goes wrong we just
-  // show an empty summary rather than blowing up the whole page
-  let sessionData: SessionItem[] = [];
-  try {
-    if (rawData) sessionData = JSON.parse(decodeURIComponent(rawData));
-  } catch {
-    // silent fallback — bad data shouldn't crash the summary screen
-    sessionData = [];
-  }
+  // fetch the first question as soon as the component mounts
+  useEffect(() => {
+    fetchQuestion();
+  }, []);
 
-  // Add up all the individual scores to get a raw total
-  const totalScore = sessionData.reduce((sum, item) => sum + item.score, 0);
-
-  // Divide by the number of questions to get the average (guard against 0 questions)
-  const avg = sessionData.length > 0 ? totalScore / sessionData.length : 0;
-
-  // Format to one decimal place for display (e.g. 7.3)
-  const averageScore = avg.toFixed(1);
-
-  // Maps the numeric average to a human-readable label and a set of colors
-  // so the whole card changes appearance based on how well the user did
-  const getPerformance = (a: number) => {
-    if (a >= 8) return { label: "Excellent",         color: "var(--success)", dim: "rgba(34,197,94,0.12)"  };
-    if (a >= 6) return { label: "Good",              color: "var(--accent)",  dim: "var(--accent-glow)"    };
-    if (a >= 4) return { label: "Average",           color: "var(--warning)", dim: "var(--warning-bg)"     };
-    return       { label: "Needs Improvement",       color: "var(--danger)",  dim: "var(--danger-bg)"      };
+  const fetchQuestion = async () => {
+    setIsLoading(true);
+    setFeedback(null);
+    setAnswer("");
+    try {
+      const res = await fetch("http://127.0.0.1:8000/interview/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role, difficulty }),
+      });
+      const data = await res.json();
+      setQuestion(data.question);
+    } catch {
+      setQuestion("Failed to load question. Please check your backend is running.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  // Returns a short actionable tip based on how the user scored overall
-  // — meant to feel encouraging rather than just cold numbers
-  const getRecommendation = (a: number) => {
-    if (a >= 8) return "Strong performance. Your answers were clear and structured — keep practicing to maintain this level.";
-    if (a >= 6) return "Good effort. You're covering the right areas, but try adding more specific examples and structure.";
-    if (a >= 4) return "Decent start. Go through the sample answers and practice explaining ideas more concisely.";
-    return "Keep going. Study the fundamentals for this role and try again — every attempt counts.";
+  const handleSubmit = async () => {
+    if (!answer.trim()) return;
+    setIsSubmitting(true);
+    try {
+      const res = await fetch("http://127.0.0.1:8000/interview/answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role, difficulty, question, answer }),
+      });
+      const data = await res.json();
+      setFeedback(data);
+      // build up history as we go — needed to pass to the summary page at the end
+      setHistory(prev => [...prev, { question, answer, score: data.score }]);
+    } catch {
+      setFeedback({ score: 0, feedback: "Failed to get feedback.", improvement: "", sample_answer: "" });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // Per-question badge colors: green for high scores, yellow for mid, red for low
-  // Used in the breakdown list so each question's score stands out at a glance
-  const scoreBadge = (score: number) => {
-    if (score >= 8) return { bg: "rgba(34,197,94,0.1)",  color: "var(--success)" };
-    if (score >= 5) return { bg: "rgba(245,158,11,0.1)", color: "var(--warning)" };
-    return               { bg: "rgba(239,68,68,0.1)",   color: "var(--danger)"  };
+  const handleNext = () => {
+    if (currentQ >= totalQ) {
+      // pack the full session into the URL so the summary page can read it
+      const summaryData = encodeURIComponent(JSON.stringify(history));
+      window.location.href = `/summary?role=${encodeURIComponent(role)}&data=${summaryData}`;
+    } else {
+      setCurrentQ(prev => prev + 1);
+      fetchQuestion();
+    }
   };
 
-  // Compute the overall performance object once so we can reuse label + colors below
-  const perf = getPerformance(avg);
+  const progress = (currentQ / totalQ) * 100;
 
   return (
     <main style={{ minHeight: "100dvh", background: "var(--bg)", padding: "1.5rem" }}>
-      <div style={{ maxWidth: 680, margin: "0 auto" }}>
+      <div style={{ maxWidth: 720, margin: "0 auto" }}>
 
-        {/* ── Page header ───────────────────────────────────────────────────────
-            Shows the role name and a quick count of how many questions were
-            answered this session. Centered so it feels like a results screen. */}
-        <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-          <p style={{
-            fontSize: "0.75rem", fontFamily: "var(--font-mono)",
-            color: "var(--text-faint)", textTransform: "uppercase",
-            letterSpacing: "0.08em", marginBottom: "0.5rem",
-          }}>
-            Session Complete
-          </p>
-          <h1 style={{
-            fontSize: "clamp(1.375rem, 3vw, 1.75rem)",
-            fontWeight: 700, color: "var(--text)",
-            letterSpacing: "-0.02em", marginBottom: "0.5rem",
-          }}>
-            {role}
-          </h1>
-          <p style={{ fontSize: "0.875rem", color: "var(--text-muted)" }}>
-            {sessionData.length} questions answered
-          </p>
-        </div>
-
-        {/* ── Overall score card ────────────────────────────────────────────────
-            The background and border color react to the performance tier so
-            the card is green for excellent, amber for average, etc.
-            The big number is the average score out of 10. */}
+        {/* header — role name, difficulty badge, and question counter */}
         <div style={{
-          background: perf.dim,
-          border: `1px solid ${perf.color}22`,
-          borderRadius: "var(--radius-lg)",
-          padding: "2rem",
-          textAlign: "center",
-          marginBottom: "1rem",
+          display: "flex", justifyContent: "space-between",
+          alignItems: "flex-start", marginBottom: "1.5rem",
         }}>
-          <p className="eyebrow" style={{ marginBottom: "1rem" }}>Overall Score</p>
-
-          {/* Large score number — clamp keeps it readable on both mobile and desktop */}
-          <div style={{ marginBottom: "0.75rem" }}>
-            <span style={{
-              fontSize: "clamp(3rem, 8vw, 5rem)",
-              fontWeight: 700, color: perf.color,
-              fontFamily: "var(--font-mono)", lineHeight: 1,
+          <div>
+            <h1 style={{
+              fontSize: "clamp(1.125rem, 2.5vw, 1.375rem)",
+              fontWeight: 700, color: "var(--text)", letterSpacing: "-0.02em",
             }}>
-              {averageScore}
-            </span>
-            <span style={{ fontSize: "1.25rem", color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>
-              /10
-            </span>
+              {role}
+            </h1>
+            <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)", marginTop: "0.125rem", textTransform: "capitalize" }}>
+              {difficulty} Level Interview
+            </p>
           </div>
-
-          {/* Performance tier label — pill badge styled to match the tier color */}
-          <span style={{
-            display: "inline-block",
-            padding: "0.25rem 1rem",
-            borderRadius: "99px",
-            border: `1px solid ${perf.color}44`,
-            fontSize: "0.875rem", fontWeight: 600,
-            color: perf.color, background: "rgba(0,0,0,0.3)",
-          }}>
-            {perf.label}
-          </span>
-
-          {/* Raw points tally — handy for users who want to see the absolute numbers */}
-          <p style={{
-            fontSize: "0.75rem", color: "var(--text-faint)",
-            fontFamily: "var(--font-mono)", marginTop: "0.75rem",
-          }}>
-            {totalScore} / {sessionData.length * 10} total points
-          </p>
+          <div style={{ textAlign: "right" }}>
+            <p style={{
+              fontSize: "0.875rem", fontWeight: 600,
+              color: "var(--text)", fontFamily: "var(--font-mono)",
+            }}>
+              Question {currentQ} of {totalQ}
+            </p>
+            {/* progress bar */}
+            <div style={{
+              width: 120, height: 4,
+              background: "var(--border)",
+              borderRadius: 99, marginTop: "0.5rem", overflow: "hidden",
+            }}>
+              <div style={{
+                width: `${progress}%`, height: "100%",
+                background: "var(--accent)",
+                borderRadius: 99,
+                transition: "width 400ms ease",
+              }} />
+            </div>
+          </div>
         </div>
 
-        {/* ── Recommendation card ───────────────────────────────────────────────
-            One sentence of coaching advice tailored to the score range.
-            Kept intentionally brief so it doesn't feel overwhelming. */}
+        {/* question card */}
         <div className="card" style={{ marginBottom: "1rem" }}>
-          <p className="eyebrow" style={{ marginBottom: "0.75rem" }}>Recommendation</p>
-          <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", lineHeight: 1.75 }}>
-            {getRecommendation(avg)}
-          </p>
+          <p className="eyebrow" style={{ marginBottom: "1rem" }}>Interview Question</p>
+          {isLoading ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+              <div className="skeleton skeleton-text" style={{ width: "90%" }} />
+              <div className="skeleton skeleton-text" style={{ width: "75%" }} />
+            </div>
+          ) : (
+            <p style={{ fontSize: "1rem", color: "var(--text)", lineHeight: 1.7 }}>
+              {question}
+            </p>
+          )}
         </div>
 
-        {/* ── Per-question breakdown ────────────────────────────────────────────
-            Lists every Q&A pair with its score badge. The answer text is clamped
-            to 2 lines to keep the list compact — users can review full answers
-            in the interview transcript if they need them. */}
-        <div className="card" style={{ marginBottom: "1.5rem" }}>
-          <p className="eyebrow" style={{ marginBottom: "1.25rem" }}>Question Breakdown</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-            {sessionData.map((item, i) => {
-              // Pick badge colors for this specific question's score
-              const badge = scoreBadge(item.score);
-              return (
-                <div key={i} style={{
-                  padding: "1rem",
-                  background: "var(--surface-2)",
-                  borderRadius: "var(--radius-md)",
-                  border: "1px solid var(--border)",
-                }}>
-                  <div style={{
-                    display: "flex", alignItems: "flex-start",
-                    justifyContent: "space-between", gap: "1rem",
-                  }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      {/* Question index label (Q1, Q2, …) */}
-                      <p style={{
-                        fontSize: "0.75rem", fontFamily: "var(--font-mono)",
-                        color: "var(--text-faint)", marginBottom: "0.5rem",
-                      }}>
-                        Q{i + 1}
-                      </p>
-
-                      {/* The actual interview question text */}
-                      <p style={{
-                        fontSize: "0.875rem", color: "var(--text)",
-                        fontWeight: 500, marginBottom: "0.5rem", lineHeight: 1.5,
-                      }}>
-                        {item.question}
-                      </p>
-
-                      {/* User's answer, clamped to 2 lines so the list doesn't get too long */}
-                      <p style={{
-                        fontSize: "0.75rem", color: "var(--text-faint)", lineHeight: 1.6,
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
-                      }}>
-                        {item.answer}
-                      </p>
-                    </div>
-
-                    {/* Score badge on the right — color reflects how well this question went */}
-                    <span style={{
-                      flexShrink: 0,
-                      padding: "0.25rem 0.75rem",
-                      borderRadius: "var(--radius-sm)",
-                      background: badge.bg, color: badge.color,
-                      fontSize: "0.875rem", fontWeight: 700,
-                      fontFamily: "var(--font-mono)",
-                    }}>
-                      {item.score}/10
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
+        {/* answer textarea — hidden once feedback arrives */}
+        {!feedback && (
+          <div className="card" style={{ marginBottom: "1rem" }}>
+            <p className="eyebrow" style={{ marginBottom: "1rem" }}>Your Answer</p>
+            <textarea
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+              placeholder="Type your answer here..."
+              rows={6}
+              style={{
+                width: "100%", resize: "vertical",
+                background: "var(--surface-2)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius-md)",
+                padding: "0.75rem 1rem",
+                color: "var(--text)",
+                fontSize: "0.9375rem",
+                lineHeight: 1.6,
+                outline: "none",
+                fontFamily: "inherit",
+              }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "0.75rem" }}>
+              <button
+                onClick={handleSubmit}
+                disabled={isSubmitting || !answer.trim()}
+                className="btn-primary"
+                style={{
+                  opacity: isSubmitting || !answer.trim() ? 0.5 : 1,
+                  cursor: isSubmitting || !answer.trim() ? "not-allowed" : "pointer",
+                }}
+              >
+                {isSubmitting ? "Evaluating..." : "Submit Answer"}
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* ── Action buttons ────────────────────────────────────────────────────
-            Two options: go back to the home page to pick a different role,
-            or jump straight back into the same role for another practice round. */}
-        <div style={{ display: "flex", gap: "0.75rem" }}>
-          <button onClick={() => router.push("/")} className="btn-secondary">
-            ← Try Another Role
-          </button>
-          <button
-            onClick={() =>
-              // Re-use the same role and default to intermediate difficulty
-              router.push(`/interview?role=${encodeURIComponent(role)}&difficulty=intermediate`)
-            }
-            className="btn-primary"
-          >
-            Practice Again
-          </button>
-        </div>
+        {/* feedback card — only shown after the answer is evaluated */}
+        {feedback && (
+          <div className="card" style={{ marginBottom: "1rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+              <p className="eyebrow">AI Feedback</p>
+              <span style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "1.25rem",
+                fontWeight: 700,
+                color: feedback.score >= 7 ? "var(--success)" : feedback.score >= 4 ? "var(--warning)" : "var(--danger)",
+              }}>
+                {feedback.score}/10
+              </span>
+            </div>
+
+            <div style={{ marginBottom: "0.75rem" }}>
+              <p className="eyebrow" style={{ fontSize: "0.6875rem", marginBottom: "0.375rem" }}>Feedback</p>
+              <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", lineHeight: 1.7 }}>
+                {feedback.feedback}
+              </p>
+            </div>
+
+            {feedback.improvement && (
+              <div style={{
+                padding: "0.75rem 1rem",
+                background: "var(--warning-bg)",
+                borderRadius: "var(--radius-md)",
+                marginBottom: "0.75rem",
+              }}>
+                <p className="eyebrow" style={{ fontSize: "0.6875rem", color: "var(--warning)", marginBottom: "0.375rem" }}>
+                  How to Improve
+                </p>
+                <p style={{ fontSize: "0.8125rem", color: "var(--warning)", lineHeight: 1.7 }}>
+                  {feedback.improvement}
+                </p>
+              </div>
+            )}
+
+            {feedback.sample_answer && (
+              <div style={{
+                padding: "0.75rem 1rem",
+                background: "rgba(34,197,94,0.06)",
+                borderRadius: "var(--radius-md)",
+              }}>
+                <p className="eyebrow" style={{ fontSize: "0.6875rem", color: "var(--success)", marginBottom: "0.375rem" }}>
+                  Sample Answer
+                </p>
+                <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)", lineHeight: 1.7 }}>
+                  {feedback.sample_answer}
+                </p>
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "1rem" }}>
+              <button onClick={handleNext} className="btn-primary">
+                {currentQ >= totalQ ? "View Summary →" : "Next Question →"}
+              </button>
+            </div>
+          </div>
+        )}
 
       </div>
     </main>
   );
 }
 
-// Wrap in Suspense because useSearchParams() needs it in Next.js —
-// the fallback spinner shows while the client hydrates the search params
-export default function SummaryPage() {
+// Next.js throws if useSearchParams isn't wrapped in Suspense
+// so the actual page content lives here and the default export wraps it
+export default function InterviewPage() {
   return (
     <Suspense fallback={
       <div style={{
@@ -256,7 +251,7 @@ export default function SummaryPage() {
         <div className="spinner" style={{ width: 24, height: 24 }} />
       </div>
     }>
-      <SummaryContent />
+      <InterviewContent />
     </Suspense>
   );
 }
