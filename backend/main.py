@@ -1,4 +1,4 @@
-# main.py
+# main.py (ROOT FOLDER)
 # This is the entry point of our FastAPI backend server.
 # It creates the app, sets up CORS so the frontend can talk to it,
 # and registers all the route files (interview and evaluation).

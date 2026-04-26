@@ -1,7 +1,7 @@
 # schemas.py
 # This file defines the data models (shapes) for our API requests and responses.
 # Pydantic models automatically validate incoming data and give clear error messages.
-
+# First step: Importing the Libraries
 from pydantic import BaseModel
 from typing import Optional
 

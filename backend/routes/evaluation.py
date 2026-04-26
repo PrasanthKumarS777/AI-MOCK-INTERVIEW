@@ -2,6 +2,7 @@
 # This file defines the API route for evaluating a user's interview answer.
 # The frontend sends the role, question, and the user's answer.
 # We pass it to the AI evaluator and return the score and feedback.
+# First step: Importing the Libraries
 
 from fastapi import APIRouter, HTTPException
 from models.schemas import AnswerSubmitRequest, EvaluationResponse

@@ -1,4 +1,5 @@
 # interview.py
+# Used comments in the code extensively for better readability and understanding.
 # This file defines the API routes related to the interview session.
 # It handles two things:
 #   1. Starting a new interview and getting the first question
